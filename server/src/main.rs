@@ -1,4 +1,5 @@
 mod responses;
+mod middleware;
 mod endpoints;
 mod global;
 

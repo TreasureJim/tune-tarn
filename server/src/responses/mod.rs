@@ -1,2 +1,2 @@
 pub mod subsonic;
-mod error;
+pub mod error;
