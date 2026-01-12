@@ -1,30 +1,63 @@
-mod responses;
-mod middleware;
 mod endpoints;
 mod global;
+mod middleware;
+mod responses;
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
-use axum::Router;
+use axum::{Router, response::IntoResponse, routing::get};
+use sqlx::postgres::PgPoolOptions;
 use tower_http::{services::ServeDir, trace::TraceLayer};
-use tracing_subscriber::EnvFilter;
+use tracing::{Span, info_span};
+use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
 
 #[tokio::main]
 async fn main() {
-    tracing_subscriber::fmt()
-        // This allows you to use, e.g., `RUST_LOG=info` or `RUST_LOG=debug`
-        // when running the app to set log levels.
-        .with_env_filter(
-            EnvFilter::try_from_default_env()
-                .or_else(|_| EnvFilter::try_new("tune_tarn=info,axum_tracing_example=error,tower_http=warn"))
-                .unwrap(),
+    tracing_subscriber::registry()
+        .with(
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+                format!(
+                    "{}=debug,tower_http=info,axum::rejection=trace",
+                    env!("CARGO_CRATE_NAME")
+                )
+                .into()
+            }),
         )
+        .with(tracing_subscriber::fmt::layer())
         .init();
 
+    let tracing_layer = TraceLayer::new_for_http()
+        .make_span_with(|request: &axum::extract::Request| {
+            let ip = request
+                .extensions()
+                .get::<axum::extract::ConnectInfo<SocketAddr>>()
+                .map(|ci| ci.ip().to_string())
+                .unwrap_or("Unknown IP".to_string());
+
+            info_span!(
+                "request",
+                request_ip = ip,
+                method = %request.method(),
+                uri = %request.uri(),
+                version = ?request.version(),
+            )
+        })
+        .on_response(
+            |response: &axum::response::Response, latency: std::time::Duration, span: &Span| {
+                // Log at your desired level with the span context
+                tracing::info!(
+                    parent: span,
+                    status = %response.status(),
+                    latency = ?latency,
+                    "finished processing request"
+                );
+            },
+        );
+
     let router = Router::new()
-        // .nest_service("/media", ServeDir::new("media"))
         .nest("/rest", endpoints::rest::get_router())
-        .layer(TraceLayer::new_for_http());
+        .layer(tracing_layer)
+        .into_make_service_with_connect_info::<SocketAddr>();
 
     let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), 3000);
     log::info!("Listening on {addr}");
