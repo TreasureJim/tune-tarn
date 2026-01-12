@@ -5,9 +5,13 @@ meta {
 }
 
 get {
-  url: {{base_url}}/rest/ping
+  url: {{base_url}}/rest/ping?apiKey=1
   body: none
   auth: inherit
+}
+
+params:query {
+  apiKey: 1
 }
 
 settings {
