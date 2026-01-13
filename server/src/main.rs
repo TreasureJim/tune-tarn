@@ -1,20 +1,27 @@
+mod authentication;
 mod endpoints;
 mod global;
 mod middleware;
-mod responses;
-mod authentication;
 mod models;
+mod responses;
 
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::{net::{IpAddr, Ipv4Addr, SocketAddr}, sync::Arc};
 
-use axum::{Router, response::IntoResponse, routing::get};
-use sqlx::postgres::PgPoolOptions;
-use tower_http::{services::ServeDir, trace::TraceLayer};
+use axum::Router;
+use sqlx::Postgres;
+use tower_http::trace::TraceLayer;
 use tracing::{Span, info_span};
-use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+
+#[derive(Clone)]
+struct AppState {
+    pub pool: sqlx::Pool<Postgres>,
+}
 
 #[tokio::main]
 async fn main() {
+    let _ = dotenvy::dotenv();
+
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
@@ -28,6 +35,21 @@ async fn main() {
         .with(tracing_subscriber::fmt::layer())
         .init();
 
+    log::info!("Connecting to database...");
+    let connection_str =
+        std::env::var("DATABASE_URL").expect("Expected to find env var DATABASE_URL");
+    let pool = sqlx::PgPool::connect_lazy(&connection_str).expect("Failed to connect to database");
+
+    let app_state = Arc::new(AppState { pool });
+
+    let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), 3000);
+    log::info!("Listening on {addr}");
+
+    let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
+    axum::serve(listener, router(app_state)).await.unwrap();
+}
+
+fn router(state: Arc<AppState>) -> axum::extract::connect_info::IntoMakeServiceWithConnectInfo<Router, SocketAddr> {
     let tracing_layer = TraceLayer::new_for_http()
         .make_span_with(|request: &axum::extract::Request| {
             let ip = request
@@ -56,14 +78,9 @@ async fn main() {
             },
         );
 
-    let router = Router::new()
-        .nest("/rest", endpoints::rest::get_router())
+    Router::<Arc<AppState>>::new()
+        .with_state(state.clone())
+        .nest("/rest", endpoints::rest::get_router(state.clone()))
         .layer(tracing_layer)
-        .into_make_service_with_connect_info::<SocketAddr>();
-
-    let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), 3000);
-    log::info!("Listening on {addr}");
-
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
-    axum::serve(listener, router).await.unwrap();
+        .into_make_service_with_connect_info::<SocketAddr>()
 }

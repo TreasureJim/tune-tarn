@@ -1,4 +1,6 @@
+use axum::Json;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 
 #[derive(Serialize, Deserialize)]
 #[serde(rename = "error")]
@@ -29,6 +31,18 @@ impl Error {
         super::subsonic::SubsonicResponse::error(self)
     }
 
+    pub fn into_json(self) -> axum::Json<serde_json::Value> {
+        Json(json!(self))
+    }
+
+    pub fn generic(message: impl Into<String>) -> Self {
+        Self {
+            code: 0,
+            message: message.into(),
+            help_url: None
+        }
+    }
+
     pub fn param_missing() -> Self {
         Self {
             code: 10,
@@ -57,6 +71,14 @@ impl Error {
         Self {
             code: 42,
             message: "Provided authentication mechanism not supported. Only 'apiKey' is supported.".to_string(),
+            help_url: None,
+        }
+    }
+
+    pub fn invalid_api_key() -> Self {
+        Self {
+            code: 44,
+            message: "Invalid API key.".to_string(),
             help_url: None,
         }
     }

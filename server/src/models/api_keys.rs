@@ -1,3 +1,5 @@
+use std::fmt;
+
 use sha2::Digest;
 use sqlx::PgPool;
 
@@ -11,46 +13,22 @@ pub struct ApiKey {
     hash: String,
 }
 
-impl ApiKey {
-    pub async fn get_user(
-        pool: &PgPool,
-        api_key: &RawApiKey,
-    ) -> Result<super::users::User, ApiKeyError> {
-        let hash = api_key.hash()?;
-        let key = sqlx::query_as::<_, ApiKey>("SELECT * FROM api_keys where hash like $1 LIMIT 1")
-            .bind(&hash)
-            .fetch_optional(pool)
-            .await?
-            .ok_or(ApiKeyError::NotFound)?;
-
-        let user = sqlx::query_as::<_, super::users::User>("SELECT * FROM users where id == $1 LIMIT 1")
-            .bind(key.id)
-            .fetch_one(pool)
-            .await?;
-
-        Ok(user)
-    }
-}
-
 #[derive(Debug, thiserror::Error)]
 pub enum ApiKeyError {
     #[error("Invalid API key format: {0}")]
     ParseError(#[from] ParseError),
-    
-    #[error("Unknown hash algorithm: {0}")]
-    HashError(#[from] HashError),
-    
+
     #[error("API key not found")]
     NotFound,
-    
+
     #[error("Database error: {0}")]
     Database(#[from] sqlx::Error),
-    
-    #[error("API key is invalid or expired")]
-    InvalidKey,
-    
-    #[error("Unauthorized: {0}")]
-    Unauthorized(String),
+
+    // #[error("API key is invalid or expired")]
+    // InvalidKey,
+
+    // #[error("Unauthorized: {0}")]
+    // Unauthorized(String),
 }
 
 const PREFIX_SIZE: u8 = 7;
@@ -83,6 +61,9 @@ impl RawApiKey {
         if !full_key.contains('.') {
             return Err(ParseError::MissingSeparator);
         }
+        if !full_key.contains(':') {
+            return Err(ParseError::MissingSeparator);
+        }
 
         let parts: Vec<&str> = full_key.splitn(2, '.').collect();
         let prefix = parts[0].to_string();
@@ -95,19 +76,15 @@ impl RawApiKey {
         }
 
         if key.len() != API_KEY_SIZE as usize {
-            return Err(ParseError::EmptyKey);
+            return Err(ParseError::InvalidKeyLength(key.len()));
         }
+        
 
         Ok(Self {
             prefix,
             key,
             hash_info,
         })
-    }
-
-    /// Returns the full API key in the format: "prefix.key"
-    pub fn to_string(&self) -> String {
-        format!("{}.{}", self.prefix, self.key)
     }
 
     /// Returns just the prefix (first 7 characters)
@@ -148,28 +125,63 @@ impl RawApiKey {
         }
     }
 
-    fn hash(&self) -> Result<String, HashError> {
+    fn hash(&self) -> Result<String, ParseError> {
         let hash = match self.hash_info.as_str() {
             "SHA256" => format!("{:x}", sha2::Sha256::digest(self.key.clone())),
-            _ => return Err(HashError::UnknownHashAlgorithm(self.hash_info.to_string())),
+            _ => return Err(ParseError::UnknownHashAlgorithm(self.hash_info.to_string())),
         };
 
         Ok(hash)
     }
+
+    pub async fn get_user(&self, pool: &PgPool) -> Result<super::users::User, ApiKeyError> {
+        let hash = self.hash()?;
+        let key = sqlx::query_as::<_, ApiKey>("SELECT * FROM api_keys where hash like $1 LIMIT 1")
+            .bind(&hash)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| {
+                log::error!("Failed to query DB for API Key: {e}");
+                e
+            })?
+            .ok_or(ApiKeyError::NotFound)?;
+
+        let user =
+            sqlx::query_as::<_, super::users::User>("SELECT * FROM users where id == $1 LIMIT 1")
+                .bind(key.id)
+                .fetch_one(pool)
+                .await
+                .map_err(|e| {
+                    log::error!("Failed to query user from an API Key: {e}");
+                    e
+                })?;
+
+        Ok(user)
+    }
 }
 
-#[derive(Debug, thiserror::Error)]
-pub enum HashError {
-    #[error("Unknown hash algorithm: {0}")]
-    UnknownHashAlgorithm(String),
+impl fmt::Display for RawApiKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}.{}:{}", self.prefix, self.hash_info, self.key)
+    }
+}
+
+impl TryFrom<String> for RawApiKey {
+    type Error = ParseError;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        RawApiKey::parse(&value)
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
 pub enum ParseError {
-    #[error("API key must contain a dot separator")]
+    #[error("Unknown hash algorithm: {0}")]
+    UnknownHashAlgorithm(String),
+    #[error("API key must contain a dot and colon separator")]
     MissingSeparator,
     #[error("Prefix must be exactly {PREFIX_SIZE} characters, got {0}")]
     InvalidPrefixLength(usize),
-    #[error("Key part cannot be empty")]
-    EmptyKey,
+    #[error("Key must be exactly {API_KEY_SIZE}, got {0}")]
+    InvalidKeyLength(usize),
 }
