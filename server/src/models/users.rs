@@ -1,4 +1,4 @@
 #[derive(sqlx::FromRow)]
-pub struct Users {
-    id: u16
+pub struct User {
+    id: i16
 }

@@ -2,7 +2,7 @@ use sha2::Digest;
 use sqlx::PgPool;
 
 #[derive(sqlx::FromRow)]
-pub struct ApiKeys {
+pub struct ApiKey {
     id: i16,
     user_id: i16,
     description: Option<String>,
@@ -11,17 +11,46 @@ pub struct ApiKeys {
     hash: String,
 }
 
-impl ApiKeys {
+impl ApiKey {
     pub async fn get_user(
         pool: &PgPool,
         api_key: &RawApiKey,
-    ) -> Result<super::users::Users, HashError> {
-        let hash = api_key.hash().unwrap();
-        let key = sqlx::query_as::<_, ApiKeys>("SELECT * FROM api_keys where hash like $1 LIMIT 1")
-            .bind(hash)
+    ) -> Result<super::users::User, ApiKeyError> {
+        let hash = api_key.hash()?;
+        let key = sqlx::query_as::<_, ApiKey>("SELECT * FROM api_keys where hash like $1 LIMIT 1")
+            .bind(&hash)
             .fetch_optional(pool)
+            .await?
+            .ok_or(ApiKeyError::NotFound)?;
+
+        let user = sqlx::query_as::<_, super::users::User>("SELECT * FROM users where id == $1 LIMIT 1")
+            .bind(key.id)
+            .fetch_one(pool)
             .await?;
+
+        Ok(user)
     }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum ApiKeyError {
+    #[error("Invalid API key format: {0}")]
+    ParseError(#[from] ParseError),
+    
+    #[error("Unknown hash algorithm: {0}")]
+    HashError(#[from] HashError),
+    
+    #[error("API key not found")]
+    NotFound,
+    
+    #[error("Database error: {0}")]
+    Database(#[from] sqlx::Error),
+    
+    #[error("API key is invalid or expired")]
+    InvalidKey,
+    
+    #[error("Unauthorized: {0}")]
+    Unauthorized(String),
 }
 
 const PREFIX_SIZE: u8 = 7;
