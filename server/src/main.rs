@@ -2,6 +2,8 @@ mod endpoints;
 mod global;
 mod middleware;
 mod responses;
+mod authentication;
+mod models;
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
