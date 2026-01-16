@@ -1,5 +1,6 @@
 use std::fmt;
 
+use serde::Serialize;
 use sha2::Digest;
 use sqlx::PgPool;
 
@@ -62,7 +63,7 @@ const PREFIX_SIZE: u8 = 7;
 const API_KEY_SIZE: u8 = 53;
 const WHOLE_KEY_SIZE: u8 = PREFIX_SIZE + 1 + API_KEY_SIZE;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct RawApiKey {
     prefix: String,
     hash_info: String,

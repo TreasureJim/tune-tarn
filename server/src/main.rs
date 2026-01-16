@@ -5,7 +5,10 @@ mod middleware;
 mod models;
 mod responses;
 
-use std::{net::{IpAddr, Ipv4Addr, SocketAddr}, sync::Arc};
+use std::{
+    net::{IpAddr, Ipv4Addr, SocketAddr},
+    sync::Arc,
+};
 
 use axum::Router;
 use sqlx::Postgres;
@@ -46,10 +49,15 @@ async fn main() {
     log::info!("Listening on {addr}");
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
-    axum::serve(listener, router(app_state)).await.unwrap();
+    axum::serve(
+        listener,
+        router(app_state).into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await
+    .unwrap();
 }
 
-fn router(state: Arc<AppState>) -> axum::extract::connect_info::IntoMakeServiceWithConnectInfo<Router, SocketAddr> {
+fn router(state: Arc<AppState>) -> Router {
     let tracing_layer = TraceLayer::new_for_http()
         .make_span_with(|request: &axum::extract::Request| {
             let ip = request
@@ -78,9 +86,13 @@ fn router(state: Arc<AppState>) -> axum::extract::connect_info::IntoMakeServiceW
             },
         );
 
-    Router::<Arc<AppState>>::new()
-        .with_state(state.clone())
+    let router = Router::<Arc<AppState>>::new();
+
+    #[cfg(debug_assertions)]
+    let router = router.nest("/testing", endpoints::testing::get_router(state.clone()));
+
+    router
         .nest("/rest", endpoints::rest::get_router(state.clone()))
         .layer(tracing_layer)
-        .into_make_service_with_connect_info::<SocketAddr>()
+        .with_state(state.clone())
 }

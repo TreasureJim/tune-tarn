@@ -1,17 +1,13 @@
 meta {
-  name: Ping
+  name: New User
   type: http
   seq: 1
 }
 
-get {
-  url: {{base_url}}/rest/ping?apiKey={{api_key}}
+post {
+  url: {{base_url}}/testing/add_user
   body: none
   auth: inherit
-}
-
-params:query {
-  apiKey: {{api_key}}
 }
 
 settings {
