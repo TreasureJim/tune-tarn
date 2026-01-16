@@ -5,12 +5,40 @@ use sqlx::PgPool;
 
 #[derive(sqlx::FromRow)]
 pub struct ApiKey {
-    id: i16,
-    user_id: i16,
-    description: Option<String>,
-    prefix: String,
-    hash_info: String,
-    hash: String,
+    pub id: i32,
+    pub user_id: i32,
+    pub description: Option<String>,
+    pub prefix: String,
+    pub hash_info: String,
+    pub hash: String,
+}
+
+impl ApiKey {
+    pub async fn add_api_key(
+        pool: &PgPool,
+        user_id: i32,
+        description: Option<String>,
+        api_key: &RawApiKey,
+    ) -> Result<(), ApiKeyError> {
+        let hash = api_key.hash()?;
+        sqlx::query!(
+            "INSERT INTO api_keys (id, user_id, description, prefix, hash_info, hash)
+                   VALUES (DEFAULT, $1, $2, $3, $4, $5)",
+            user_id,
+            description,
+            api_key.prefix(),
+            api_key.hash_info,
+            hash
+        )
+        .execute(pool)
+        .await
+        .map_err(|e| {
+            log::error!("Failed to add API Key to database: {e}");
+            e
+        })?;
+
+        Ok(())
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -23,7 +51,6 @@ pub enum ApiKeyError {
 
     #[error("Database error: {0}")]
     Database(#[from] sqlx::Error),
-
     // #[error("API key is invalid or expired")]
     // InvalidKey,
 
@@ -78,7 +105,6 @@ impl RawApiKey {
         if key.len() != API_KEY_SIZE as usize {
             return Err(ParseError::InvalidKeyLength(key.len()));
         }
-        
 
         Ok(Self {
             prefix,
@@ -136,25 +162,30 @@ impl RawApiKey {
 
     pub async fn get_user(&self, pool: &PgPool) -> Result<super::users::User, ApiKeyError> {
         let hash = self.hash()?;
-        let key = sqlx::query_as::<_, ApiKey>("SELECT * FROM api_keys where hash like $1 LIMIT 1")
-            .bind(&hash)
-            .fetch_optional(pool)
-            .await
-            .map_err(|e| {
-                log::error!("Failed to query DB for API Key: {e}");
-                e
-            })?
-            .ok_or(ApiKeyError::NotFound)?;
+        let key = sqlx::query_as!(
+            ApiKey,
+            "SELECT * FROM api_keys where hash = $1 LIMIT 1",
+            &hash
+        )
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| {
+            log::error!("Failed to query DB for API Key: {e}");
+            e
+        })?
+        .ok_or(ApiKeyError::NotFound)?;
 
-        let user =
-            sqlx::query_as::<_, super::users::User>("SELECT * FROM users where id == $1 LIMIT 1")
-                .bind(key.id)
-                .fetch_one(pool)
-                .await
-                .map_err(|e| {
-                    log::error!("Failed to query user from an API Key: {e}");
-                    e
-                })?;
+        let user = sqlx::query_as!(
+            super::users::User,
+            "SELECT * FROM users where id = $1 LIMIT 1",
+            key.id
+        )
+        .fetch_one(pool)
+        .await
+        .map_err(|e| {
+            log::error!("Failed to query user from an API Key: {e}");
+            e
+        })?;
 
         Ok(user)
     }
