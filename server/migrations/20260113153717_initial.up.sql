@@ -27,7 +27,6 @@ drop table if exists "artist";
 create table "artist" (
 	id SERIAL NOT NULL PRIMARY KEY,
 	name VARCHAR NOT NULL,
-	starred DATE,
 	image_id INT REFERENCES image (id),
 	music_brainz_id VARCHAR(36)
 );
@@ -43,7 +42,6 @@ create table "album" (
 	album_picture TEXT,
 );
 
-
 drop table if exists "album_contributor";
 create table "album_contributor" (
 	artist_id INT NOT NULL REFERENCES artist (id),
@@ -51,6 +49,14 @@ create table "album_contributor" (
 	PRIMARY KEY (artist_id, album_id)
 );
 
-
-
 drop table if exists "child";
+create table "child" (
+	id SERIAL NOT NULL PRIMARY KEY,
+	name TEXT NOT NULL,
+	path TEXT NOT NULL,
+	album_id INT NOT NULL REFERENCES album (id),
+	track_number INT,
+	duration INT NOT NULL,
+	music_brainz_id VARCHAR(36),
+	clean: BOOLEAN
+);
