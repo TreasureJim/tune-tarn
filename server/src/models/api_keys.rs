@@ -163,30 +163,20 @@ impl RawApiKey {
 
     pub async fn get_user(&self, pool: &PgPool) -> Result<super::users::User, ApiKeyError> {
         let hash = self.hash()?;
-        let key = sqlx::query_as!(
-            ApiKey,
-            "SELECT * FROM api_keys where hash = $1 LIMIT 1",
+
+        let user = sqlx::query_as!(
+            super::users::User,
+            "SELECT * FROM users where id = ( SELECT user_id FROM api_keys where hash = $1 LIMIT 1 ) LIMIT 1",
             &hash
         )
         .fetch_optional(pool)
         .await
         .map_err(|e| {
-            log::error!("Failed to query DB for API Key: {e}");
+            log::error!("Failed to query user from an API Key: {e}");
             e
         })?
         .ok_or(ApiKeyError::NotFound)?;
 
-        let user = sqlx::query_as!(
-            super::users::User,
-            "SELECT * FROM users where id = $1 LIMIT 1",
-            key.id
-        )
-        .fetch_one(pool)
-        .await
-        .map_err(|e| {
-            log::error!("Failed to query user from an API Key: {e}");
-            e
-        })?;
 
         Ok(user)
     }
